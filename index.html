@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>Poker Score Calculator</title>
+    <style>
+        body { font-family: sans-serif; }
+        table { border-collapse: collapse; width: 100%; margin-top: 10px; }
+        th, td { border: 1px solid black; padding: 8px; text-align: center; }
+        button:disabled { background-color: #eee; color: #aaa; border-color: #ccc; }
+        .folded { background-color: #cccccc; }
+        .info-board { background-color: #f0f0f0; padding: 10px; border-radius: 5px; margin-bottom: 15px; }
+        .info-board h2, .info-board h3 { margin: 0; padding: 0; display: inline-block; }
+        .info-board h3 { margin-left: 20px; }
+        .oya-row { background-color: #e0f7fa; } 
+    </style>
+</head>
+<body>
+    <h1>Poker Score Calculator</h1>
+
+    <p>
+        初期チップ設定：
+        <input type="number" id="startChip" value="100">
+        <button onclick="initializeGame()">ゲーム開始</button>
+    </p>
+
+    <div class="info-board">
+        <h2>Current Pot: <span id="totalPot">0</span></h2>
+        <h3>Amount to Call: <span id="currentBet">0</span></h3>
+        <h3>Raise Count: <span id="raiseCount">0</span> / 3</h3>
+        <h3>現在の親: <span id="oyaDisplay">未選択</span></h3>
+    </div>
+
+    <table>
+        <thead>
+            <tr>
+                <th>プレイヤー</th>
+                <th>持ちチップ</th>
+                <th>今回のベット額</th>
+                <th>アクション</th>
+                <th>状況</th>
+            </tr>
+        </thead>
+        <tbody id="playerTableBody">
+            </tbody>
+    </table>
+
+    <div style="text-align: right; margin-top: 20px;">
+        <button onclick="nextHand()">次のハンドへ (リセット)</button>
+    </div>
+
+    <script>
+        // === グローバル変数定義: ゲーム全体の状態を管理 ===
+        const NUM_PLAYERS = 4; // プレイヤーの人数
+        let playerChips = []; // 各プレイヤーの持ちチップ
+        let playerBets = []; // 現在のハンドでの各プレイヤーのベット額
+        let playerFolded = []; // 各プレイヤーがフォールドしたかどうかの状態
+        let playerNames = Array(NUM_PLAYERS).fill(""); // 各プレイヤーの名前
+        let totalPot = 0; // 現在のポットの合計額
+        let gameStarted = false; // ゲームが開始されたかどうかの状態
+        let currentBet = 0; // 現在のコールに必要なベット額
+        let raiseCount = 0; // レイズされた回数
+        let oyaIndex = -1; // 親プレイヤーの番号 (-1は未選択)
+
+        /**
+         * プレイヤー名が変更されたときに、その名前を配列に保存する
+         * @param {number} playerNum - プレイヤー番号 (0-3)
+         */
+        function updatePlayerName(playerNum) {
+            const nameInput = document.getElementById(`playerName${playerNum}`);
+            playerNames[playerNum] = nameInput.value;
+        }
+
+        /**
+         * 現在のゲーム状態をもとに、プレイヤー情報を表示するテーブルを再描画する
+         */
+        function renderTable() {
+            const tableBody = document.getElementById("playerTableBody");
+            tableBody.innerHTML = ""; // テーブルの内容を一旦空にする
+
+            // 全プレイヤーの情報をループで生成する
+            for (let i = 0; i < NUM_PLAYERS; i++) {
+                const tr = document.createElement("tr"); // 1プレイヤー分のテーブル行(tr)を作成
+                if (playerFolded[i]) { tr.classList.add("folded"); } // フォールドしていたらfoldedクラスを付与
+                if (i === oyaIndex) { tr.classList.add("oya-row"); } // 親だったらoya-rowクラスを付与
+                
+                // 1行分のHTMLを生成
+                tr.innerHTML = `
+                    <td><input 
+                        type="text" 
+                        id="playerName${i}" 
+                        placeholder="プレイヤー${i + 1}" 
+                        value="${playerNames[i]}" 
+                        onchange="updatePlayerName(${i})">
+                    </td>
+                    <td id="playerChip${i}">${playerChips[i] !== undefined ? playerChips[i] : 'N/A'}</td>
+                    <td id="playerBet${i}">${playerBets[i] !== undefined ? playerBets[i] : 0}</td>
+                    <td>
+                        <input type="number" id="betAmount${i}" placeholder="上乗せ額">
+                        <button onclick="betOrRaise(${i})">Bet/Raise</button>
+                        <button onclick="callBet(${i})">Call</button>
+                        <button onclick="fold(${i})">Fold</button>
+                    </td>
+                    <td>
+                        <button onclick="setOya(${i})" ${oyaIndex !== -1 ? 'disabled' : ''}>親にする</button>
+                        <button onclick="declareWinner(${i})" ${playerFolded[i] ? 'disabled' : ''}>👑 この人が勝ち</button>
+                    </td>
+                `;
+                tableBody.appendChild(tr); // 生成した行をテーブルに追加
+            }
+        }
+
+        /**
+         * 「ゲーム開始」ボタンが押されたときの処理。初期チップを全員に配る
+         */
+        function initializeGame() {
+            if (gameStarted && !confirm("ゲームをリセットして最初からやり直しますか？")) return;
+            const startChip = Number(document.getElementById("startChip").value);
+            playerChips = Array(NUM_PLAYERS).fill(startChip);
+            playerNames = Array(NUM_PLAYERS).fill("");
+            gameStarted = true;
+            nextHand(); // nextHandを呼んでゲームの最初の状態にセットする
+        }
+
+        /**
+         * 「親にする」ボタンが押されたときの処理
+         * @param {number} playerNum - プレイヤー番号 (0-3)
+         */
+        function setOya(playerNum) {
+            if (!gameStarted || oyaIndex !== -1) return;
+            oyaIndex = playerNum;
+            updateDisplay(); // 表示を更新して親のハイライトなどを反映させる
+        }
+        
+        /**
+         * 「Call」ボタンが押されたときの処理
+         * @param {number} playerNum - プレイヤー番号 (0-3)
+         */
+        function callBet(playerNum) {
+            if (!gameStarted || playerFolded[playerNum]) return;
+            const amountToCall = currentBet - playerBets[playerNum];
+            if (amountToCall <= 0) { alert("コールする必要はありません。"); return; }
+
+            // チップを計算
+            playerChips[playerNum] -= amountToCall;
+            playerBets[playerNum] += amountToCall;
+            totalPot += amountToCall;
+            updateDisplay(); // 表示を更新
+        }
+
+        /**
+         * 「Bet/Raise」ボタンが押されたときの処理
+         * @param {number} playerNum - プレイヤー番号 (0-3)
+         */
+        function betOrRaise(playerNum) {
+            if (!gameStarted || playerFolded[playerNum]) return;
+            const inputAmount = Number(document.getElementById(`betAmount${playerNum}`).value);
+            if (inputAmount <= 0) { alert("正しい額を入力してください。"); return; }
+            if (inputAmount > 100) {
+                alert("ベット/レイズの上限は100です。");
+                return;
+            }
+
+            // これがベットかレイズかを判断
+            if (currentBet > 0) { // 誰かが既にベットしている場合 -> レイズ
+                if (raiseCount >= 3) { alert("レイズは3回までです。コールまたはフォールドしてください。"); return; }
+                raiseCount++;
+            }
+            
+            const amountToCall = currentBet - playerBets[playerNum]; // 現在のベット額に追いつくための差額
+            const totalCommitAmount = amountToCall + inputAmount; // 差額＋今回の上乗せ額
+
+            // チップを計算
+            playerChips[playerNum] -= totalCommitAmount;
+            playerBets[playerNum] += totalCommitAmount;
+            totalPot += totalCommitAmount;
+            currentBet = playerBets[playerNum]; // コールに必要な額を更新
+            document.getElementById(`betAmount${playerNum}`).value = ""; // 入力欄をクリア
+            updateDisplay(); // 表示を更新
+        }
+
+        /**
+         * 「Fold」ボタンが押されたときの処理
+         * @param {number} playerNum - プレイヤー番号 (0-3)
+         */
+        function fold(playerNum) {
+            if (!gameStarted || playerFolded[playerNum]) return;
+            playerFolded[playerNum] = true; // プレイヤーをフォールド状態にする
+            updateDisplay(); // 表示を更新
+        }
+
+        /**
+         * 「この人が勝ち」ボタンが押されたときの処理
+         * @param {number} winnerNum - 勝者のプレイヤー番号 (0-3)
+         */
+        function declareWinner(winnerNum) {
+            if (!gameStarted || playerFolded[winnerNum]) {
+                alert("フォールドしたプレイヤーは勝者になれません。");
+                return;
+            }
+            const winnerName = playerNames[winnerNum] || `プレイヤー${winnerNum + 1}`;
+            
+            // 確認ダイアログを表示
+            if (confirm(`${winnerName} が勝ちでよろしいですか？\nポットの ${totalPot} チップが全て渡されます。`)) {
+                playerChips[winnerNum] += totalPot; // 勝者にポットのチップを渡す
+                alert(`${winnerName} が ${totalPot} チップを獲得しました！`);
+                nextHand(); // 次のハンドへ
+            }
+        }
+
+        /**
+         * 「次のハンドへ」ボタンが押されたときの処理。ハンドの状態をリセットする
+         */
+        function nextHand() {
+            if (!gameStarted) return;
+            // ハンドごとの変数をリセット
+            totalPot = 0;
+            currentBet = 0;
+            raiseCount = 0;
+            oyaIndex = -1;
+            playerBets = Array(NUM_PLAYERS).fill(0);
+            playerFolded = Array(NUM_PLAYERS).fill(false);
+            updateDisplay(); // 表示を更新
+        }
+
+        /**
+         * ゲームの表示全体（ポット、テーブルなど）を最新の状態に更新する
+         */
+        function updateDisplay() {
+            // 情報ボードの数値を更新
+            document.getElementById("totalPot").innerText = totalPot;
+            document.getElementById("currentBet").innerText = currentBet;
+            document.getElementById("raiseCount").innerText = raiseCount;
+            
+            // 親の表示を更新
+            const oyaDisplay = document.getElementById("oyaDisplay");
+            if (oyaIndex !== -1) {
+                oyaDisplay.innerText = playerNames[oyaIndex] || `プレイヤー${oyaIndex + 1}`;
+            } else {
+                oyaDisplay.innerText = "未選択";
+            }
+            
+            // プレイヤーのテーブルを再描画
+            renderTable();
+        }
+
+        // 最初にページが読み込まれたときにテーブルの枠を描画する
+        renderTable();
+    </script>
+</body>
+</html>
