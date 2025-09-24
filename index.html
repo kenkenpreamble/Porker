@@ -143,8 +143,8 @@
             if (!gameStarted || playerFolded[playerNum]) return;
             const inputAmount = Number(document.getElementById(`betAmount${playerNum}`).value);
             if (inputAmount <= 0) { alert("正しい額を入力してください。"); return; }
-            if (inputAmount > 100) {
-                alert("ベット/レイズの上限は100です。");
+            if (inputAmount > 200) {
+                alert("ベット/レイズの上限は200です。");
                 return;
             }
 
